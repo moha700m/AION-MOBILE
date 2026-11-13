@@ -1,24 +1,30 @@
 # AION MOBILE
 
-Private fork workspace for the AionUi mobile companion. The iOS workflow builds the upstream mobile app source from `iOfficeAI/AionUi` and applies AION MOBILE-specific app identifiers at build time.
+Bootstrap repository for the AionUi iOS companion build. The GitHub Actions workflow checks out the upstream mobile source at build time and applies AION MOBILE-specific identifiers before building.
 
-## iOS build setup
+## One-time setup required for a signed iPhone IPA
 
-The workflow is in **Actions → AION MOBILE iOS IPA → Run workflow**.
+The workflow is ready, but a signed iOS IPA cannot be produced until the app has its own Expo/EAS project and Apple signing credentials.
 
-Before the first build, configure:
+1. Create an Expo account/project for this app at https://expo.dev/ (do not use the upstream maintainer's project).
+2. Create an Expo access token at https://expo.dev/accounts/[your-account]/settings/access-tokens.
+3. In this repository, open **Settings → Secrets and variables → Actions**:
+   - Add secret `EXPO_TOKEN` with the Expo access token.
+   - Add variable `EXPO_PROJECT_ID` with this app's EAS project UUID.
+4. Configure iOS signing credentials for that EAS project. For direct installation on your iPhone, an Apple Developer membership and an ad hoc provisioning profile containing your iPhone's registered UDID are normally required.
 
-1. **Settings → Secrets and variables → Actions → Secrets**
-   - `EXPO_TOKEN`: an Expo access token for the Expo account that owns this app's EAS project.
-2. **Settings → Secrets and variables → Actions → Variables**
-   - `EXPO_PROJECT_ID`: the EAS project ID created under your Expo account for this app.
+Then run **Actions → AION MOBILE iOS IPA → Run workflow**. The build is internal-distribution only; it does not submit to TestFlight or the App Store.
 
-The first successful internal iOS build also needs valid Apple Developer signing credentials configured for that EAS project. EAS may require registering the target iPhone's UDID for an ad hoc/internal install. No Apple credentials, certificates, passwords, or private keys belong in this public repository.
+## What the workflow does
 
-The workflow uses the upstream app's mobile directory and packages the shared `src/common` utilities into the mobile build workspace. It uses bundle identifier `com.moha700m.aionmobile`, builds an internal-distribution IPA, and does **not** submit to TestFlight or the App Store.
+- Checks out `iOfficeAI/AionUi` at build time.
+- Packages the shared `src/common` utilities used by the mobile app.
+- Uses bundle identifier `com.moha700m.aionmobile` and your EAS project ID.
+- Builds the iOS IPA using EAS Build and waits for the result.
 
 ## Important
 
-- This repository is currently public. Do not commit API keys, Expo tokens, Apple credentials, provisioning profiles, or private signing keys.
-- The mobile client is a companion app: it connects to an AionUi server. It does not run the desktop Electron backend on iPhone.
+- This repository is public. Never commit API keys, Expo tokens, Apple credentials, provisioning profiles, or private signing keys.
+- The mobile app is a companion client that connects to an AionUi server. It does not run the desktop Electron backend on iPhone.
+- This repository currently contains the build workflow and setup documentation, not a full mirrored copy of upstream source. The workflow fetches upstream source when it runs.
 - Upstream source: https://github.com/iOfficeAI/AionUi
