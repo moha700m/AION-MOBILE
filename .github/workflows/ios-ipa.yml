@@ -1,4 +1,4 @@
-name: AION MOBILE iOS IPA
+name: AION MOBILE unsigned iOS IPA
 
 on:
   workflow_dispatch:
@@ -16,18 +16,10 @@ concurrency:
 
 jobs:
   build-ios:
-    name: Build iOS IPA
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    name: Build unsigned iOS IPA
+    runs-on: macos-15
+    timeout-minutes: 120
     steps:
-      - name: Validate build credentials
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          EXPO_PROJECT_ID: ${{ vars.EXPO_PROJECT_ID }}
-        run: |
-          test -n "$EXPO_TOKEN" || { echo "::error::Add EXPO_TOKEN in Settings > Secrets and variables > Actions."; exit 1; }
-          test -n "$EXPO_PROJECT_ID" || { echo "::error::Add EXPO_PROJECT_ID in Settings > Secrets and variables > Actions > Variables."; exit 1; }
-
       - name: Check out workflow repository
         uses: actions/checkout@v4
 
@@ -39,42 +31,6 @@ jobs:
           path: upstream
           fetch-depth: 1
 
-      - name: Prepare the mobile workspace
-        working-directory: upstream
-        env:
-          EXPO_PROJECT_ID: ${{ vars.EXPO_PROJECT_ID }}
-        run: |
-          set -euo pipefail
-          # The mobile app imports shared pure utilities from the monorepo root.
-          mkdir -p mobile/_workspace/src
-          cp -R src/common mobile/_workspace/src/common
-          # Point Metro at the packaged shared source so the EAS upload is self-contained.
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("mobile/metro.config.js")
-          s = p.read_text()
-          s = s.replace("path.resolve(projectRoot, '..')", "path.resolve(projectRoot, '_workspace')")
-          p.write_text(s)
-          # Use this fork's own EAS project and bundle identifier, never the upstream owner's.
-          p = Path("mobile/app.config.ts")
-          s = p.read_text()
-          s = s.replace("ai.resopod.aionui", "com.moha700m.aionmobile")
-          import re, os
-          s = re.sub(r"projectId:\s*'[^']+'", "projectId: process.env.EXPO_PROJECT_ID || ''", s)
-          p.write_text(s)
-          # Add a device-installable internal profile; no TestFlight submission is performed.
-          import json
-          p = Path("mobile/eas.json")
-          data = json.loads(p.read_text())
-          data.setdefault("build", {})["aion-internal"] = {
-            "distribution": "internal",
-            "channel": "preview",
-            "ios": {"image": "latest"}
-          }
-          data.pop("submit", None)
-          p.write_text(json.dumps(data, indent=2) + "\n")
-          PY
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -82,17 +38,78 @@ jobs:
           cache: npm
           cache-dependency-path: upstream/mobile/package.json
 
-      - name: Install mobile dependencies
+      - name: Prepare AION MOBILE workspace
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          mkdir -p mobile/_workspace/src
+          cp -R src/common mobile/_workspace/src/common
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path("mobile/metro.config.js")
+          s = p.read_text()
+          s = s.replace("path.resolve(projectRoot, '..')", "path.resolve(projectRoot, '_workspace')")
+          p.write_text(s)
+          p = Path("mobile/app.config.ts")
+          s = p.read_text()
+          s = s.replace("name: 'AionUi Mobile'", "name: 'AION MOBILE'")
+          s = s.replace("ai.resopod.aionui", "com.moha700m.aionmobile")
+          s = re.sub(r"projectId: '[^']+'", "projectId: undefined", s)
+          p.write_text(s)
+          PY
+
+      - name: Install JavaScript dependencies
         working-directory: upstream/mobile
         run: npm install --no-audit --no-fund
 
-      - name: Build signed iOS IPA with EAS
+      - name: Generate native iOS project
         working-directory: upstream/mobile
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          EXPO_PROJECT_ID: ${{ vars.EXPO_PROJECT_ID }}
-        run: npx eas-cli@latest build --platform ios --profile aion-internal --non-interactive --wait
+        run: npx expo prebuild --platform ios --no-install --clean
 
-      - name: Report build result
-        if: always()
-        run: echo "Check the EAS build URL printed in the previous step. The IPA is hosted by EAS; this workflow does not submit it to Apple.";
+      - name: Install CocoaPods
+        working-directory: upstream/mobile/ios
+        run: pod install
+
+      - name: Build unsigned iOS app
+        working-directory: upstream/mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKSPACE="$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)"
+          test -n "$WORKSPACE"
+          xcodebuild -list -json -workspace "$WORKSPACE" > /tmp/aion-xcode-list.json
+          SCHEME="$(python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/aion-xcode-list.json'))
+          schemes=d.get('workspace',{}).get('schemes',[])
+          if not schemes:
+              raise SystemExit('No Xcode scheme found')
+          print(schemes[0])
+          PY
+          )"
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+          APP_PATH="$(find "$PWD/build/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          mkdir -p "$PWD/build/ipa/Payload"
+          cp -R "$APP_PATH" "$PWD/build/ipa/Payload/AION MOBILE.app"
+          ditto -c -k --sequesterRsrc --keepParent "$PWD/build/ipa/Payload" "$PWD/build/AION-MOBILE-unsigned.ipa"
+          test -s "$PWD/build/AION-MOBILE-unsigned.ipa"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: AION-MOBILE-unsigned-IPA
+          path: upstream/mobile/build/AION-MOBILE-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
