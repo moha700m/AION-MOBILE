@@ -72,7 +72,7 @@ jobs:
             "ios": {"image": "latest"}
           }
           data.pop("submit", None)
-          p.write_text(json.dumps(data, indent=2) + "\\n")
+          p.write_text(json.dumps(data, indent=2) + "\n")
           PY
 
       - name: Set up Node.js
